@@ -30,6 +30,10 @@ def layout() -> html.Div:
             dcc.Store(id="selected-vehicle-store", data=None),
             dcc.Store(id="selected-station-store", data=None),
             dcc.Store(id="playback-playing-store", data=False),
+            # Last pan/zoom the user set on the map, captured from
+            # map-graph's relayoutData and fed back into every figure
+            # rebuild - see callbacks/map.py and components/map_view.py.
+            dcc.Store(id="map-view-store", data=None),
             html.Div(
                 className="control-bar",
                 children=[

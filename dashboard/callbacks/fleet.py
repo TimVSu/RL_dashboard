@@ -76,4 +76,6 @@ def register(app: dash.Dash) -> None:
         if not active_cell or not rows:
             return dash.no_update
         row = rows[active_cell["row"]]
-        return int(row["vehicle_id"])
+        # [operator_id, vehicle_id]: vehicle_id alone is only unique within
+        # one operator's fleet (see dashboard/components/map_view.py).
+        return [int(row["operator_id"]), int(row["vehicle_id"])]

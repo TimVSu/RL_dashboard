@@ -19,12 +19,24 @@ color/size/opacity instead of by symbol shape:
 - selection: a dedicated highlight trace per selected vehicle/station, never
   reusing the semantic color channel.
 
+Vehicle position is only known at H3-cell granularity (that's what the
+recorder captures - see diagnostics/recorder.py in the separate
+urban-mobility-simulation repo), so multiple vehicles sharing a cell would
+otherwise render at the exact same centroid coordinate and stack invisibly
+on top of each other - `_jittered_positions` spreads them in a small ring
+around the centroid so each stays an independently visible, independently
+colored, independently hoverable dot. Every vehicle-position lookup (the
+marker itself, its bid line, its destination line, its selection highlight)
+goes through that same jittered position so they all stay consistent with
+each other.
+
 All layers are optional booleans passed in by the callback; this module only
 builds figures, it never reads callback state or touches the filesystem.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import h3
@@ -36,6 +48,16 @@ MAP_STYLE = "carto-positron"
 _SOC_COLORSCALE = "RdYlGn"  # low SOC (0) -> red, high SOC (1) -> green
 _VEHICLE_BASE_SIZE = 9
 _VEHICLE_BID_SIZE = 14
+_JITTER_RADIUS_FRACTION = 0.55  # fraction of cell centroid-to-vertex distance
+
+# vehicle_id is only unique *within* one operator's fleet (it's the column
+# index into that operator's RL action/allocation buffers) - with more than
+# one operator, e.g. operator 0's vehicle 58 and operator 1's vehicle 58 are
+# two different real vehicles that both happen to be numbered 58. Every
+# vehicle identity in this module is therefore the pair (operator_id,
+# vehicle_id), never a bare vehicle_id.
+VehicleKey = tuple[int, int]
+VehiclePositions = dict[VehicleKey, tuple[float, float]]
 
 
 def _latlng(cell: str) -> tuple[float, float]:
@@ -48,6 +70,38 @@ def _center(cells: list[str]) -> tuple[float, float]:
         return 37.7749, -122.4194
     lats, lngs = zip(*(_latlng(c) for c in cells))
     return sum(lats) / len(lats), sum(lngs) / len(lngs)
+
+
+def _cell_jitter_radius_deg(cell: str) -> float:
+    centroid_lat, centroid_lng = h3.cell_to_latlng(cell)
+    boundary = h3.cell_to_boundary(cell)
+    max_dist = max(math.hypot(lat - centroid_lat, lng - centroid_lng) for lat, lng in boundary)
+    return max_dist * _JITTER_RADIUS_FRACTION
+
+
+def _jittered_positions(vehicles: pd.DataFrame) -> VehiclePositions:
+    """One (lat, lon) per (operator_id, vehicle_id), spreading out vehicles that share a cell."""
+    positions: VehiclePositions = {}
+    for cell, group in vehicles.groupby("position_h3"):
+        centroid_lat, centroid_lng = _latlng(cell)
+        keys = sorted((int(op), int(v)) for op, v in zip(group["operator_id"], group["vehicle_id"]))
+        n = len(keys)
+        if n == 1:
+            positions[keys[0]] = (centroid_lat, centroid_lng)
+            continue
+        radius_deg = _cell_jitter_radius_deg(cell)
+        lng_scale = math.cos(math.radians(centroid_lat)) or 1.0
+        for i, key in enumerate(keys):
+            angle = 2 * math.pi * i / n
+            positions[key] = (
+                centroid_lat + radius_deg * math.sin(angle),
+                centroid_lng + (radius_deg * math.cos(angle)) / lng_scale,
+            )
+    return positions
+
+
+def _vehicle_key(row: pd.Series) -> VehicleKey:
+    return int(row["operator_id"]), int(row["vehicle_id"])
 
 
 def _h3_cells_trace(cells: list[str]) -> go.Scattermap:
@@ -88,11 +142,13 @@ def _vehicle_hover_text(row: pd.Series) -> str:
     return text
 
 
-def _vehicles_trace(vehicles: pd.DataFrame, *, known: bool, showscale: bool) -> Optional[go.Scattermap]:
+def _vehicles_trace(
+    vehicles: pd.DataFrame, positions: VehiclePositions, *, known: bool, showscale: bool
+) -> Optional[go.Scattermap]:
     subset = vehicles[vehicles["position_known"] == known]
     if subset.empty:
         return None
-    lats, lngs = zip(*(_latlng(c) for c in subset["position_h3"]))
+    lats, lngs = zip(*(positions[_vehicle_key(row)] for _, row in subset.iterrows()))
     sizes = [_VEHICLE_BID_SIZE if b else _VEHICLE_BASE_SIZE for b in subset["is_bid"]]
     texts = [_vehicle_hover_text(row) for _, row in subset.iterrows()]
     return go.Scattermap(
@@ -110,7 +166,7 @@ def _vehicles_trace(vehicles: pd.DataFrame, *, known: bool, showscale: bool) -> 
             "showscale": showscale,
             "colorbar": {"title": "SOC", "x": 1.0, "len": 0.5, "y": 0.75},
         },
-        customdata=[["vehicle", int(v)] for v in subset["vehicle_id"]],
+        customdata=[["vehicle", int(op), int(v)] for op, v in zip(subset["operator_id"], subset["vehicle_id"])],
         text=texts,
         hovertemplate="%{text}<extra></extra>",
         name="Vehicles" if known else "Vehicles (estimated pos.)",
@@ -118,12 +174,12 @@ def _vehicles_trace(vehicles: pd.DataFrame, *, known: bool, showscale: bool) -> 
     )
 
 
-def _destination_trace(vehicles: pd.DataFrame) -> go.Scattermap:
+def _destination_trace(vehicles: pd.DataFrame, positions: VehiclePositions) -> go.Scattermap:
     lats, lngs = [], []
     for _, row in vehicles.iterrows():
         if row["last_known_position_h3"] == row["destination_h3"]:
             continue
-        lat0, lng0 = _latlng(row["last_known_position_h3"])
+        lat0, lng0 = positions[_vehicle_key(row)]
         lat1, lng1 = _latlng(row["destination_h3"])
         lats.extend([lat0, lat1, None])
         lngs.extend([lng0, lng1, None])
@@ -139,13 +195,14 @@ def _destination_trace(vehicles: pd.DataFrame) -> go.Scattermap:
 
 
 def _selected_vehicle_traces(
-    vehicles: pd.DataFrame, selected_vehicle_id: int
+    vehicles: pd.DataFrame, positions: VehiclePositions, selected_vehicle: VehicleKey
 ) -> list[go.Scattermap]:
-    match = vehicles[vehicles["vehicle_id"] == selected_vehicle_id]
+    operator_id, vehicle_id = selected_vehicle
+    match = vehicles[(vehicles["operator_id"] == operator_id) & (vehicles["vehicle_id"] == vehicle_id)]
     if match.empty:
         return []
     row = match.iloc[0]
-    lat0, lng0 = _latlng(row["position_h3"])
+    lat0, lng0 = positions[selected_vehicle]
     lat1, lng1 = _latlng(row["destination_h3"])
     traces = [
         go.Scattermap(
@@ -236,7 +293,7 @@ def _selected_station_trace(stations: pd.DataFrame, selected_station_id: int) ->
     )
 
 
-def _bids_trace(vehicles: pd.DataFrame, stations: pd.DataFrame) -> go.Scattermap:
+def _bids_trace(vehicles: pd.DataFrame, stations: pd.DataFrame, positions: VehiclePositions) -> go.Scattermap:
     station_pos = {row["station_id"]: row["h3"] for _, row in stations.iterrows()}
     lats, lngs = [], []
     for _, row in vehicles.iterrows():
@@ -245,7 +302,7 @@ def _bids_trace(vehicles: pd.DataFrame, stations: pd.DataFrame) -> go.Scattermap
         station_h3 = station_pos.get(row["allocation"])
         if station_h3 is None:
             continue
-        lat0, lng0 = _latlng(row["position_h3"])
+        lat0, lng0 = positions[_vehicle_key(row)]
         lat1, lng1 = _latlng(station_h3)
         lats.extend([lat0, lat1, None])
         lngs.extend([lng0, lng1, None])
@@ -264,7 +321,7 @@ def build_map_figure(
     vehicles: pd.DataFrame,
     stations: pd.DataFrame,
     *,
-    selected_vehicle_id: Optional[int] = None,
+    selected_vehicle: Optional[VehicleKey] = None,
     selected_station_id: Optional[int] = None,
     show_vehicles: bool = True,
     show_stations: bool = True,
@@ -272,18 +329,21 @@ def build_map_figure(
     color_stations_by_price: bool = False,
     show_bids: bool = False,
     show_h3_cells: bool = False,
+    saved_view: Optional[dict] = None,
 ) -> go.Figure:
     fig = go.Figure()
 
+    positions = _jittered_positions(vehicles) if len(vehicles) else {}
     all_cells = list(stations["h3"]) + list(vehicles["position_h3"])
+
     if show_h3_cells and all_cells:
         fig.add_trace(_h3_cells_trace(sorted(set(all_cells))))
 
     if show_destinations and len(vehicles):
-        fig.add_trace(_destination_trace(vehicles))
+        fig.add_trace(_destination_trace(vehicles, positions))
 
     if show_bids and len(vehicles) and len(stations):
-        fig.add_trace(_bids_trace(vehicles, stations))
+        fig.add_trace(_bids_trace(vehicles, stations, positions))
 
     if show_stations and len(stations):
         fig.add_trace(_stations_trace(stations, color_stations_by_price))
@@ -293,31 +353,35 @@ def build_map_figure(
                 fig.add_trace(trace)
 
     if show_vehicles and len(vehicles):
-        known_trace = _vehicles_trace(vehicles, known=True, showscale=True)
-        estimated_trace = _vehicles_trace(vehicles, known=False, showscale=False)
+        known_trace = _vehicles_trace(vehicles, positions, known=True, showscale=True)
+        estimated_trace = _vehicles_trace(vehicles, positions, known=False, showscale=False)
         if known_trace is not None:
             fig.add_trace(known_trace)
         if estimated_trace is not None:
             fig.add_trace(estimated_trace)
-        if selected_vehicle_id is not None:
-            for trace in _selected_vehicle_traces(vehicles, selected_vehicle_id):
+        if selected_vehicle is not None:
+            for trace in _selected_vehicle_traces(vehicles, positions, selected_vehicle):
                 fig.add_trace(trace)
 
-    center_lat, center_lng = _center(all_cells)
+    # Explicit view persistence: the caller feeds back whatever the user last
+    # panned/zoomed to (captured from map-graph's relayoutData), and we
+    # request that exact view on every rebuild - this does not depend on
+    # Plotly's `uirevision` auto-preservation actually working for the
+    # MapLibre-based "map" subplot, which in practice was resetting to the
+    # freshly computed center/zoom on every unrelated figure rebuild (e.g.
+    # toggling a layer checkbox).
+    if saved_view and saved_view.get("center") and saved_view.get("zoom") is not None:
+        center = saved_view["center"]
+        zoom = saved_view["zoom"]
+    else:
+        center_lat, center_lng = _center(all_cells)
+        center = {"lat": center_lat, "lon": center_lng}
+        zoom = 12.5
+
     fig.update_layout(
-        map={
-            "style": MAP_STYLE,
-            "center": {"lat": center_lat, "lon": center_lng},
-            "zoom": 12.5,
-            # layout.map.uirevision documents itself as defaulting to
-            # layout.uirevision, but setting it explicitly here too rules
-            # out any inheritance-order surprise - both must survive every
-            # figure rebuild (new layer toggled, new timestep, etc.) so the
-            # user's pan/zoom is never silently reset by an unrelated change.
-            "uirevision": "map",
-        },
+        map={"style": MAP_STYLE, "center": center, "zoom": zoom, "uirevision": "map"},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
-        uirevision="map",  # preserve user pan/zoom across timestep updates
+        uirevision="map",
         showlegend=False,
         height=560,
     )
