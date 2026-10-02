@@ -28,6 +28,14 @@ from dashboard.data.schema import SCHEMA_VERSION
 
 CENTER_LAT, CENTER_LNG = 37.7749, -122.4194
 
+# Mirror urban-mobility-simulation's GymWrapper._calculate_reward shape
+# closely enough that reward_components.parquet and operator_metrics.parquet
+# stay consistent with each other in this fixture, the way they are in a
+# real run (operator_metrics.reward is the same value _calculate_reward
+# returned, just reshaped from the PPO buffers).
+PENALTY_DECAY_RATE = 5.0
+EARNINGS_PER_CHARGE = 0.2
+
 
 @dataclass
 class VehicleTravelState:
@@ -87,9 +95,10 @@ def _simulate_rollout(
     capacities: np.ndarray,
     base_prices: np.ndarray,
     learning_progress: float,
-) -> tuple[list[dict], list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     vehicle_rows: list[dict] = []
     station_rows: list[dict] = []
+    reward_component_rows: list[dict] = []
     operator_reward_acc = np.zeros(num_operators)
     operator_value_acc = np.zeros(num_operators)
 
@@ -232,21 +241,53 @@ def _simulate_rollout(
                 }
             )
 
+        if t == 0:
+            operator_rows: list[dict] = []
         for op in range(num_operators):
-            op_bids = sum(
-                1
-                for v in range(num_vehicles)
-                if v % num_operators == op and vehicle_alloc[v] != dummy_station_index
+            op_vehicle_ids = [v for v in range(num_vehicles) if v % num_operators == op]
+            fleet_size = len(op_vehicle_ids)
+            socs = np.array([states[v].soc for v in op_vehicle_ids])
+
+            # Earnings: bid value of this operator's vehicles that landed a
+            # real (non-dummy) allocation this step - a fixture-only proxy
+            # for "won an auction slot", since the fixture doesn't run an
+            # actual per-station auction. Cost is a fraction of earnings,
+            # standing in for operating/charging cost.
+            earnings = sum(
+                vehicle_price[v] for v in op_vehicle_ids if vehicle_alloc[v] != dummy_station_index
             )
-            reward = 0.1 * op_bids - 0.02 * (num_vehicles / num_operators - op_bids)
-            reward += learning_progress * 0.5 + float(rng.normal(0, 0.2))
+            cost = earnings * float(rng.uniform(0.3, 0.6))
+            winnings_factor = earnings / fleet_size if fleet_size else 0.0
+            penalty_factor = float(np.mean(np.exp(-PENALTY_DECAY_RATE * socs))) if fleet_size else 0.0
+            low_soc_penalty = EARNINGS_PER_CHARGE * penalty_factor
+            cost_penalty = cost / fleet_size if fleet_size else 0.0
+
+            # Exactly winnings_factor - low_soc_penalty - cost_penalty, no
+            # extra noise term - this must match _calculate_reward's
+            # relationship exactly, the same way it does in a real run.
+            reward = winnings_factor - low_soc_penalty - cost_penalty
+            # The "improves with epoch" trend lives in earnings (vehicles
+            # bid more successfully as learning_progress rises via p_bid
+            # above); value is the critic's own (noisy) estimate of reward.
             value = reward + float(rng.normal(0, 0.15))
             operator_reward_acc[op] = reward
             operator_value_acc[op] = value
 
-        if t == 0:
-            operator_rows: list[dict] = []
-        for op in range(num_operators):
+            reward_component_rows.append(
+                {
+                    "epoch": epoch,
+                    "rollout_id": rollout_id,
+                    "timestep": t,
+                    "operator_id": op,
+                    "reward": round(reward, 4),
+                    "earnings": round(earnings, 4),
+                    "cost": round(cost, 4),
+                    "winnings_factor": round(winnings_factor, 4),
+                    "penalty_factor": round(penalty_factor, 4),
+                    "low_soc_penalty": round(low_soc_penalty, 4),
+                    "cost_penalty": round(cost_penalty, 4),
+                }
+            )
             operator_rows.append(
                 {
                     "epoch": epoch,
@@ -258,7 +299,7 @@ def _simulate_rollout(
                 }
             )
 
-    return vehicle_rows, station_rows, operator_rows
+    return vehicle_rows, station_rows, operator_rows, reward_component_rows
 
 
 def generate_fixture(
@@ -287,12 +328,13 @@ def generate_fixture(
     all_vehicle_rows: list[dict] = []
     all_station_rows: list[dict] = []
     all_operator_rows: list[dict] = []
+    all_reward_component_rows: list[dict] = []
 
     for epoch in range(num_epochs):
         learning_progress = epoch / max(num_epochs - 1, 1)
         for rollout_id in range(num_parallel_envs):
             epoch_rng = np.random.default_rng((seed, epoch, rollout_id))
-            v_rows, s_rows, o_rows = _simulate_rollout(
+            v_rows, s_rows, o_rows, rc_rows = _simulate_rollout(
                 epoch_rng,
                 epoch=epoch,
                 rollout_id=rollout_id,
@@ -310,6 +352,7 @@ def generate_fixture(
             all_vehicle_rows.extend(v_rows)
             all_station_rows.extend(s_rows)
             all_operator_rows.extend(o_rows)
+            all_reward_component_rows.extend(rc_rows)
 
     vehicle_df = pd.DataFrame(all_vehicle_rows)
     vehicle_df.insert(0, "run_id", run_id)
@@ -317,10 +360,13 @@ def generate_fixture(
     station_df.insert(0, "run_id", run_id)
     operator_df = pd.DataFrame(all_operator_rows)
     operator_df.insert(0, "run_id", run_id)
+    reward_components_df = pd.DataFrame(all_reward_component_rows)
+    reward_components_df.insert(0, "run_id", run_id)
 
     vehicle_df.to_parquet(run_dir / "vehicle_states.parquet", partition_cols=["epoch"])
     station_df.to_parquet(run_dir / "station_states.parquet", partition_cols=["epoch"])
     operator_df.to_parquet(run_dir / "operator_metrics.parquet", partition_cols=["epoch"])
+    reward_components_df.to_parquet(run_dir / "reward_components.parquet", partition_cols=["epoch"])
 
     training_df = (
         operator_df.groupby(["run_id", "epoch", "operator_id"])

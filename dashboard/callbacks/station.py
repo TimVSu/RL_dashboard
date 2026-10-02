@@ -4,15 +4,42 @@ from __future__ import annotations
 
 import dash
 import plotly.graph_objects as go
-from dash import Input, Output, html
+from dash import Input, Output, State, html
 
 from dashboard import config
 from dashboard.components.station_panel import build_station_detail, build_station_history_figure
+from dashboard.components.station_table import to_table_records as station_table_records
 from dashboard.data import loader
 from dashboard.data.models import StationState
 
 
 def register(app: dash.Dash) -> None:
+    @app.callback(
+        Output("station-table", "data"),
+        Input("run-dropdown", "value"),
+        Input("epoch-dropdown", "value"),
+        Input("rollout-dropdown", "value"),
+        Input("timestep-slider", "value"),
+    )
+    def update_station_table(run_id, epoch, rollout, timestep):
+        if not run_id or epoch is None or rollout is None or timestep is None:
+            return []
+        sdf = loader.load_station_states(config.RUNS_DIR, run_id, epoch)
+        current = loader.at_timestep(sdf, rollout, timestep)
+        return station_table_records(current)
+
+    @app.callback(
+        Output("selected-station-store", "data", allow_duplicate=True),
+        Input("station-table", "active_cell"),
+        State("station-table", "data"),
+        prevent_initial_call=True,
+    )
+    def on_station_row_click(active_cell, rows):
+        if not active_cell or not rows:
+            return dash.no_update
+        row = rows[active_cell["row"]]
+        return int(row["station_id"])
+
     @app.callback(
         Output("station-detail-panel", "children"),
         Output("station-history-graph", "figure"),

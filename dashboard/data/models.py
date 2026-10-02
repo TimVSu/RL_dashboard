@@ -209,6 +209,48 @@ class OperatorMetric:
     value: float
 
 
+@dataclass(frozen=True)
+class RewardComponents:
+    """One operator's reward breakdown, at one (epoch, rollout, timestep).
+
+    Field names mirror urban-mobility-simulation's
+    GymWrapper._calculate_reward dict keys verbatim - that function is the
+    single source of truth for what these mean; this dataclass doesn't
+    reinterpret them. reward = winnings_factor - low_soc_penalty -
+    cost_penalty.
+    """
+
+    run_id: str
+    epoch: int
+    rollout_id: int
+    timestep: int
+    operator_id: int
+    reward: float
+    earnings: float
+    cost: float
+    winnings_factor: float
+    penalty_factor: float
+    low_soc_penalty: float
+    cost_penalty: float
+
+    @classmethod
+    def from_row(cls, row: pd.Series) -> "RewardComponents":
+        return cls(
+            run_id=row["run_id"],
+            epoch=int(row["epoch"]),
+            rollout_id=int(row["rollout_id"]),
+            timestep=int(row["timestep"]),
+            operator_id=int(row["operator_id"]),
+            reward=float(row["reward"]),
+            earnings=float(row["earnings"]),
+            cost=float(row["cost"]),
+            winnings_factor=float(row["winnings_factor"]),
+            penalty_factor=float(row["penalty_factor"]),
+            low_soc_penalty=float(row["low_soc_penalty"]),
+            cost_penalty=float(row["cost_penalty"]),
+        )
+
+
 def is_real_assignment(allocation: int, dummy_station_index: int) -> bool:
     """True if `allocation` is a real charging-station assignment.
 

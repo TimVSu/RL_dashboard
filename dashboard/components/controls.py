@@ -6,16 +6,6 @@ from dash import dcc, html
 
 from dashboard import config
 
-MAP_LAYER_OPTIONS = [
-    {"label": " Vehicles", "value": "vehicles"},
-    {"label": " Charging stations", "value": "stations"},
-    {"label": " Destinations", "value": "destinations"},
-    {"label": " Station prices", "value": "station_prices"},
-    {"label": " Bids", "value": "bids"},
-    {"label": " H3 cells", "value": "h3_cells"},
-]
-DEFAULT_MAP_LAYERS = ["vehicles", "stations"]
-
 
 def build_epoch_rollout_selectors() -> html.Div:
     return html.Div(
@@ -44,7 +34,15 @@ def build_timestep_controls() -> html.Div:
         className="timestep-controls",
         children=[
             html.Div(id="timestep-label", className="timestep-label"),
-            dcc.Slider(id="timestep-slider", min=0, max=0, step=1, value=0, updatemode="drag"),
+            # "mouseup" (not "drag") - six separate callbacks (operator
+            # cards, vehicle map, fleet view, station status, and more) key
+            # off this slider's value, each re-filtering a potentially large
+            # cached per-epoch DataFrame and rebuilding figures. With
+            # updatemode="drag" every intermediate position the mouse
+            # passes through during a jump fires all of them, which is what
+            # made large jumps on large runs feel laggy - "mouseup" fires
+            # the callbacks once, at the final position, instead.
+            dcc.Slider(id="timestep-slider", min=0, max=0, step=1, value=0, updatemode="mouseup"),
             html.Div(
                 className="playback-buttons",
                 children=[
@@ -67,15 +65,5 @@ def build_timestep_controls() -> html.Div:
                 interval=config.PLAYBACK_BASE_INTERVAL_MS,
                 disabled=True,
             ),
-        ],
-    )
-
-
-def build_layer_toggles() -> html.Div:
-    return html.Div(
-        className="layer-toggles",
-        children=[
-            html.Label("Map layers"),
-            dcc.Checklist(id="map-layers", options=MAP_LAYER_OPTIONS, value=DEFAULT_MAP_LAYERS),
         ],
     )

@@ -17,6 +17,7 @@ from dashboard.data.cache import cached
 from dashboard.data.models import RunMetadata
 from dashboard.data.schema import (
     OPERATOR_METRIC_COLUMNS,
+    REWARD_COMPONENT_COLUMNS,
     SCHEMA_VERSION,
     STATION_COLUMNS,
     TRAINING_METRIC_COLUMNS,
@@ -87,6 +88,25 @@ def load_operator_metrics(
         runs_dir / run_id / "operator_metrics.parquet", epoch, run_id, "operator_metrics"
     )
     validate_columns(df, OPERATOR_METRIC_COLUMNS, table="operator_metrics", run_id=run_id)
+    return df
+
+
+@cached(maxsize=64)
+def load_reward_components(runs_dir: Path, run_id: str, epoch: int) -> pd.DataFrame:
+    """reward_components.parquet, or an empty (but correctly-columned) frame.
+
+    Unlike the other per-epoch tables, this one is optional (see
+    dashboard/data/schema.py) - a run recorded before it existed just
+    doesn't have the file on disk. Returning an empty frame with the
+    expected columns (rather than raising FileNotFoundError) lets
+    at_timestep()/for_rollout() keep working unchanged, and lets callers
+    check `.empty` to decide whether to render a "not recorded" state.
+    """
+    path = runs_dir / run_id / "reward_components.parquet"
+    if not path.exists():
+        return pd.DataFrame(columns=list(REWARD_COMPONENT_COLUMNS))
+    df = _read_partitioned(path, epoch, run_id, "reward_components")
+    validate_columns(df, REWARD_COMPONENT_COLUMNS, table="reward_components", run_id=run_id)
     return df
 
 

@@ -107,16 +107,8 @@ body {
     flex-wrap: wrap;
 }
 
-.map-column {
-    flex: 2;
-    min-width: 420px;
-    background: white;
-    border: 1px solid #dde1e6;
-    border-radius: 6px;
-    padding: 10px;
-}
-
-.fleet-column {
+.fleet-column,
+.station-column {
     flex: 1;
     min-width: 380px;
     background: white;
@@ -137,19 +129,46 @@ body {
     min-width: 130px;
 }
 
-.layer-toggles {
+.operator-row {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-    font-size: 13px;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
 }
 
-.layer-toggles .dash-checklist,
-.layer-toggles > div {
+.operator-card {
+    flex: 1;
+    min-width: 220px;
+    background: white;
+    border: 1px solid #dde1e6;
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+
+.operator-card h4 {
+    margin: 0 0 6px 0;
+}
+
+.operator-reward-headline {
     display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 4px 0 8px 0;
+    margin-bottom: 4px;
+    border-bottom: 1px solid #f0f1f3;
+}
+
+.operator-reward-value {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.operator-history-section {
+    background: white;
+    border: 1px solid #dde1e6;
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 12px;
 }
 
 .detail-grid {

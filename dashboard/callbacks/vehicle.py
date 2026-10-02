@@ -35,7 +35,7 @@ def register(app: dash.Dash) -> None:
 
         # selected-vehicle-store holds [operator_id, vehicle_id]: vehicle_id
         # alone is only unique within one operator's fleet, so both are
-        # required to identify one real vehicle (see map_view.py).
+        # required to identify one real vehicle.
         operator_id, vehicle_id = selected_vehicle
 
         vdf = loader.load_vehicle_states(config.RUNS_DIR, run_id, epoch)

@@ -73,6 +73,27 @@ TRAINING_METRIC_COLUMNS: dict[str, str] = {
     "mean_value": "float64",
 }
 
+# reward_components.parquet is optional: it was added after operator_metrics,
+# so runs recorded before then (e.g. demo_run, synthetic_week_run) simply
+# don't have this table. loader.load_reward_components() returns an empty
+# frame with these columns rather than raising when it's missing - callers
+# should treat "empty" and "not recorded for this run" the same way, and
+# show that state in the UI rather than erroring.
+REWARD_COMPONENT_COLUMNS: dict[str, str] = {
+    "run_id": "object",
+    "epoch": "int64",
+    "rollout_id": "int64",
+    "timestep": "int64",
+    "operator_id": "int64",
+    "reward": "float64",
+    "earnings": "float64",
+    "cost": "float64",
+    "winnings_factor": "float64",
+    "penalty_factor": "float64",
+    "low_soc_penalty": "float64",
+    "cost_penalty": "float64",
+}
+
 
 class SchemaError(RuntimeError):
     """A recorded run does not match the schema this dashboard expects."""

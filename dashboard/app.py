@@ -10,7 +10,7 @@ import dash
 from dash import Dash, dcc, html
 
 from dashboard import config
-from dashboard.callbacks import controls, fleet, map as map_callbacks, station, training, vehicle
+from dashboard.callbacks import controls, fleet, operator, station, training, vehicle
 
 
 def create_app() -> Dash:
@@ -35,10 +35,10 @@ def create_app() -> Dash:
     )
 
     controls.register(app)
-    map_callbacks.register(app)
     fleet.register(app)
     vehicle.register(app)
     station.register(app)
+    operator.register(app)
     training.register(app)
 
     return app

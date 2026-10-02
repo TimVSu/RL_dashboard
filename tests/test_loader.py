@@ -96,6 +96,44 @@ def test_load_operator_metrics_and_training_metrics(run_dir: Path) -> None:
     assert set(tm["operator_id"]) == {0, 1}
 
 
+def test_load_reward_components(run_dir: Path) -> None:
+    df = loader.load_reward_components(run_dir, "test_run", 0)
+    assert len(df) == 2 * 6 * 2  # rollouts * timesteps * operators
+    assert set(df["operator_id"]) == {0, 1}
+    # reward = winnings_factor - low_soc_penalty - cost_penalty, same
+    # relationship urban-mobility-simulation's GymWrapper._calculate_reward
+    # defines - the fixture mirrors it deliberately. Compared with a small
+    # tolerance since each column was independently rounded to 4dp on disk.
+    recomputed = df["winnings_factor"] - df["low_soc_penalty"] - df["cost_penalty"]
+    assert (recomputed - df["reward"]).abs().max() < 1e-3
+
+
+def test_load_reward_components_missing_table_is_empty_not_an_error(run_dir: Path) -> None:
+    import shutil
+
+    shutil.rmtree(run_dir / "test_run" / "reward_components.parquet")
+    clear_all()
+    df = loader.load_reward_components(run_dir, "test_run", 0)
+    assert df.empty
+    assert set(df.columns) == {
+        "run_id",
+        "epoch",
+        "rollout_id",
+        "timestep",
+        "operator_id",
+        "reward",
+        "earnings",
+        "cost",
+        "winnings_factor",
+        "penalty_factor",
+        "low_soc_penalty",
+        "cost_penalty",
+    }
+    # at_timestep/for_rollout must keep working on the empty-but-columned frame.
+    assert loader.at_timestep(df, rollout_id=0, timestep=0).empty
+    assert loader.for_rollout(df, rollout_id=0).empty
+
+
 def test_schema_version_mismatch_raises(run_dir: Path) -> None:
     import json
 
