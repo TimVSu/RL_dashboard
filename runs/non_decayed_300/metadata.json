@@ -1,0 +1,60 @@
+{
+  "run_id": "non_decayed_300",
+  "schema_version": "0.1.0",
+  "created_at": "2026-10-04T12:54:20.762663+00:00",
+  "description": "Training run non_decayed_300",
+  "num_epochs": 262,
+  "num_parallel_envs": 3,
+  "steps_per_rollout": 336,
+  "num_vehicles": 30,
+  "num_stations": 8,
+  "num_operators": 2,
+  "dummy_station_index": 8,
+  "h3_resolution": 7,
+  "operators": [
+    {
+      "operator_id": 0,
+      "name": "Operator 0"
+    },
+    {
+      "operator_id": 1,
+      "name": "Operator 1"
+    }
+  ],
+  "config": {
+    "EARNINGS_PER_CHARGE": 0,
+    "PENALTY_DECAY_RATE": 8,
+    "TEMPORAL_RESOLUTION": 30,
+    "MAX_BIDDING_PRICE": 100,
+    "EMPTY_VEHICLE_PENALTY": 200,
+    "ROLLOUT_STEPS": 336,
+    "MAX_RELOCATION_TIME": 30,
+    "NUM_EPOCHS": 300,
+    "GAE_GAMMA": 0.98,
+    "GAE_LAMBDA": 0.92,
+    "PPO_EPOCHS": 4,
+    "BATCH_SIZE": 128,
+    "CLIP_EPS": 0.2,
+    "C1_VALUE": 0.5,
+    "C2_ALLOC_ENTROPY": 0.06,
+    "ALLOC_ENTROPY_DECAY_RATE": 0.0,
+    "C2_PRICE_ENTROPY": 0.02,
+    "PRICE_ENTROPY_DECAY_RATE": 0.0,
+    "MAX_GRAD_NORM": 0.5,
+    "WARMUP_TIME_MINUTES": 1440,
+    "END_TIME": 11520,
+    "NUM_PARALLEL_ENVS": 3,
+    "NUM_TORCH_THREADS": 1,
+    "BUDGET": 20000,
+    "EPSILON": 0.00067,
+    "MAX_STD": 0.7,
+    "MAX_STD_DECAY_RATE": 0.0,
+    "velocity_kmh_by_operator": [
+      110.0,
+      110.0
+    ]
+  },
+  "seed": null,
+  "recording_level": "minimal",
+  "is_evaluation": false
+}
