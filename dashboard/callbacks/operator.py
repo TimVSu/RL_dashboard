@@ -37,7 +37,7 @@ def register(app: dash.Dash) -> None:
         rc_df = loader.load_reward_components(config.RUNS_DIR, run_id, epoch)
         rc_now = loader.at_timestep(rc_df, rollout, timestep)
 
-        cards = build_operator_cards(operators, om_now, om_df, rc_now, rc_df, vehicles_now)
+        cards = build_operator_cards(operators, om_now, om_df, rc_now, rc_df, vehicles_now, vdf)
 
         if rc_df.empty:
             fig = go.Figure()

@@ -51,6 +51,7 @@ def build_operator_cards(
     reward_components_now: pd.DataFrame,
     reward_components_epoch: pd.DataFrame,
     vehicles_now: pd.DataFrame,
+    vehicles_epoch: pd.DataFrame,
 ) -> html.Div:
     cards = []
     for i, op in enumerate(operators):
@@ -61,6 +62,15 @@ def build_operator_cards(
         num_charging = int(op_vehicles["has_commitment"].sum()) if fleet_size else 0
         mean_soc = float(op_vehicles["soc"].mean()) if fleet_size else None
         total_bid_value = float(op_vehicles.loc[op_vehicles["is_bid"], "bid_price"].sum()) if fleet_size else 0.0
+
+        # Mean bid PRICE (not cost - cost only covers bids that won) across
+        # every vehicle and every timestep/rollout in the selected epoch,
+        # restricted to steps where a bid was actually placed - same
+        # is_bid filter as total_bid_value above, just over the whole
+        # epoch's history instead of only the current timestep.
+        op_vehicles_epoch = vehicles_epoch[vehicles_epoch["operator_id"] == op.operator_id]
+        op_bids_epoch = op_vehicles_epoch.loc[op_vehicles_epoch["is_bid"], "bid_price"]
+        mean_bid = float(op_bids_epoch.mean()) if not op_bids_epoch.empty else None
 
         metrics_row = operator_metrics_now[operator_metrics_now["operator_id"] == op.operator_id]
         reward = float(metrics_row["reward"].iloc[0]) if not metrics_row.empty else None
@@ -110,6 +120,7 @@ def build_operator_cards(
             _field("Bidding now", f"{num_bidding} / {fleet_size}"),
             _field("Charging (committed)", f"{num_charging} / {fleet_size}"),
             _field("Total bid value", f"{total_bid_value:.2f}"),
+            _field("Mean bid price (epoch)", f"{mean_bid:.2f}" if mean_bid is not None else "-"),
             _field("Critic value", f"{value:.3f}" if value is not None else "-"),
             _field("Reward sum (epoch)", f"{reward_sum:.3f}" if reward_sum is not None else "-"),
         ]
